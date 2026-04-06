@@ -668,6 +668,70 @@ void GDEM102F91::drawTrend(int16_t x, int16_t y, float percent,
     drawString(x + 16, y + 1, buf, color, 1);
 }
 
+// ─── fillRectDither ──────────────────────────────────────────────────────────
+// Fills a rectangle with a Bayer 4×4 ordered dither pattern mixing two colors.
+// 'density' controls the ratio: 0 = all bgColor, 16 = all fgColor.
+// Useful intermediate values: 4 (~25%), 8 (~50%), 12 (~75%).
+//
+// How it works: a 4×4 Bayer matrix defines a threshold for each pixel position.
+// If the density value exceeds that threshold the pixel gets fgColor, otherwise
+// bgColor. The pattern tiles seamlessly so large fills look uniform at distance.
+//
+// At 113 DPI the 4×4 cell is ~0.9mm — visible up close but blends at arm's length.
+//
+// Bayer 4×4 threshold matrix (values 0–15):
+//   0   8   2  10
+//  12   4  14   6
+//   3  11   1   9
+//  15   7  13   5
+void GDEM102F91::fillRectDither(int16_t x, int16_t y, int16_t w, int16_t h,
+                                 uint8_t fgColor, uint8_t bgColor, uint8_t density) {
+    static const uint8_t bayer4[4][4] = {
+        {  0,  8,  2, 10 },
+        { 12,  4, 14,  6 },
+        {  3, 11,  1,  9 },
+        { 15,  7, 13,  5 }
+    };
+    density = constrain(density, 0, 16);
+
+    // Clamp to display bounds
+    if (x < 0) { w += x; x = 0; }
+    if (x + w > EPD_WIDTH) w = EPD_WIDTH - x;
+    if (w <= 0) return;
+
+    int16_t y0 = max(y, _tileY);
+    int16_t y1 = min(y + h, _tileY + _tileH);
+    if (y0 >= y1) return;
+
+    for (int16_t row = y0; row < y1; row++) {
+        for (int16_t col = x; col < x + w; col++) {
+            uint8_t threshold = bayer4[row & 3][col & 3];
+            setPixel(col, row, (density > threshold) ? fgColor : bgColor);
+        }
+    }
+}
+
+// ─── fillRectCheckerboard ────────────────────────────────────────────────────
+// Fills a rectangle with a simple 1×1 checkerboard pattern alternating between
+// two colors. At display resolution this reads as a 50/50 optical blend.
+// Simpler and faster than Bayer dithering for the fixed 50% case.
+void GDEM102F91::fillRectCheckerboard(int16_t x, int16_t y, int16_t w, int16_t h,
+                                       uint8_t color1, uint8_t color2) {
+    if (x < 0) { w += x; x = 0; }
+    if (x + w > EPD_WIDTH) w = EPD_WIDTH - x;
+    if (w <= 0) return;
+
+    int16_t y0 = max(y, _tileY);
+    int16_t y1 = min(y + h, _tileY + _tileH);
+    if (y0 >= y1) return;
+
+    for (int16_t row = y0; row < y1; row++) {
+        for (int16_t col = x; col < x + w; col++) {
+            setPixel(col, row, ((col ^ row) & 1) ? color2 : color1);
+        }
+    }
+}
+
 // ─── Low-level SPI ───────────────────────────────────────────────────────────
 void GDEM102F91::_sendCommand(uint8_t cmd) {
     digitalWrite(_dc, LOW);
@@ -701,33 +765,77 @@ void GDEM102F91::_reset() {
 void GDEM102F91::_init() {
     _reset();
 
+    // PSR — Panel Setting Register (0x00)
+    // 0x0F = RES[1:0]=11 (960x640), LUT_EN=1 (LUT from OTP), FORMAT=1 (RGB), SCAN=1 (up)
+    // 0x29 = VCMDS=0, SHD_N=1 (booster on), RST_N=1 (normal op), SPI=1 (4-wire)
     _sendCommand(0x00);
-    _sendData(0x0f); _sendData(0x29);
+    _sendData(0x0F); _sendData(0x29);
 
+    // PWR — Power Setting Register (0x03)
+    // 0x10 = VDS_EN=1, VDG_EN=0 (source/gate power from internal)
+    // 0x54 = VGHL_LV=01 (VGH=20V, VGL=-20V)
+    // 0x44 = VSH=15V, VSL=-15V (source driving voltages)
     _sendCommand(0x03);
     _sendData(0x10); _sendData(0x54); _sendData(0x44);
 
+    // BTST — Booster Soft Start (0x06)
+    // Controls VGH booster soft-start phase timings and driving strength.
+    // Values from Good Display reference code for this panel (FPC7705 REV.b).
     _sendCommand(0x06);
     _sendData(0x0F); _sendData(0x8B); _sendData(0x93); _sendData(0xA1);
 
-    _sendCommand(0x41); _sendData(0x00);
-    _sendCommand(0x50); _sendData(0x37);
+    // TSE — Temperature Sensor Enable (0x41)
+    // 0x00 = use internal temperature sensor, offset = 0°C
+    _sendCommand(0x41);
+    _sendData(0x00);
 
+    // CDI — VCOM and Data Interval (0x50)
+    // 0x37 = DDX=0, VBD=011 (border = Gray 3), CDI=0111 (VCOM interval 10 Hsync)
+    _sendCommand(0x50);
+    _sendData(0x37);
+
+    // TCON — Gate/Source Non-overlap Period (0x60)
+    // 0x02, 0x02 = S2G and G2S non-overlap = 2 (4µs each)
     _sendCommand(0x60);
     _sendData(0x02); _sendData(0x02);
 
-    _sendCommand(0x61); // TRES: 960 x 640
-    _sendData(0x03); _sendData(0xC0);   // 0x03C0 = 960
-    _sendData(0x02); _sendData(0x80);   // 0x0280 = 640
+    // TRES — Resolution Setting (0x61)
+    // Horizontal: 0x03C0 = 960 source channels
+    // Vertical:   0x0280 = 640 gate lines
+    _sendCommand(0x61);
+    _sendData(0x03); _sendData(0xC0);   // HRES = 0x03C0 = 960
+    _sendData(0x02); _sendData(0x80);   // VRES = 0x0280 = 640
 
+    // GSST — Gate/Source Start Setting (0x65)
+    // 0x00 0x00 0x00 0x00 = gate start at G0, source start at S0 (top-left origin)
     _sendCommand(0x65);
     _sendData(0x00); _sendData(0x00); _sendData(0x00); _sendData(0x00);
 
-    _sendCommand(0xE7); _sendData(0x1C);
-    _sendCommand(0xE3); _sendData(0x00);
-    _sendCommand(0xE9); _sendData(0x01);
-    _sendCommand(0x30); _sendData(0x08);
+    // PWS — Power Saving Register (0xE7)
+    // 0x1C = enable VCOM/source power saving during refresh intervals
+    _sendCommand(0xE7);
+    _sendData(0x1C);
 
-    _sendCommand(0x04); // PON
+    // Unknown register 0xE3
+    // Present in Good Display reference code for this panel; purpose undocumented.
+    // Do not remove — display does not initialise correctly without it.
+    _sendCommand(0xE3);
+    _sendData(0x00);
+
+    // Unknown register 0xE9
+    // Present in Good Display reference code for this panel; purpose undocumented.
+    // Do not remove — display does not initialise correctly without it.
+    _sendCommand(0xE9);
+    _sendData(0x01);
+
+    // PLL — PLL Control / Frame Rate (0x30)
+    // 0x08 = frame rate ~50Hz (internal oscillator divider)
+    _sendCommand(0x30);
+    _sendData(0x08);
+
+    // PON — Power ON (0x04)
+    // Activates DCDC, gate driver, source driver, VCOM, and temperature sensor.
+    // BUSY goes LOW during power-on sequence; wait for HIGH before sending data.
+    _sendCommand(0x04);
     _waitBusy();
 }

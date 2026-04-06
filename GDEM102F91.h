@@ -132,6 +132,16 @@ public:
                      const char* label = nullptr, uint8_t labelColor = EPD_BLACK);
     void drawTrend(int16_t x, int16_t y, float percent, bool up, uint8_t color);
 
+    // ─── Dithered fills ───────────────────────────────────────────────────────
+    // Ordered (Bayer 4×4) dither between two colors.
+    // density: 0=all bg, 16=all fg. Useful steps: 4(25%), 8(50%), 12(75%).
+    void fillRectDither(int16_t x, int16_t y, int16_t w, int16_t h,
+                        uint8_t fgColor, uint8_t bgColor, uint8_t density);
+
+    // Simple 1×1 checkerboard — faster fixed 50% blend between two colors.
+    void fillRectCheckerboard(int16_t x, int16_t y, int16_t w, int16_t h,
+                              uint8_t color1, uint8_t color2);
+
     // ─── Utility ──────────────────────────────────────────────────────────────
     int16_t width()  { return EPD_WIDTH; }
     int16_t height() { return EPD_HEIGHT; }
