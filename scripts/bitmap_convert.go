@@ -1,0 +1,291 @@
+// bitmap_convert.go — Convert PNG images to GDEM102F91 PROGMEM bitmap arrays.
+//
+// Supports two output formats:
+//   2bpp — 4-color (black/white/yellow/red), 4 pixels per byte, MSB-first.
+//           Use with drawBitmap2bpp(). Width is padded to a multiple of 4.
+//   1bpp — monochrome, 8 pixels per byte, MSB = leftmost pixel.
+//           Use with drawBitmap1bpp(). Any width accepted.
+//
+// The display's 4-color palette:
+//   black  = (0,   0,   0)
+//   white  = (255, 255, 255)
+//   yellow = (255, 215, 0)
+//   red    = (255, 0,   0)
+//
+// Usage:
+//   go run bitmap_convert.go -mode 2bpp logo.png
+//   go run bitmap_convert.go -mode 1bpp -threshold 128 icon.png
+//   go run bitmap_convert.go -mode 2bpp -name myLogo -output logo.h logo.png
+//   go run bitmap_convert.go -mode 2bpp -resize 64x64 logo.png
+//
+// No external dependencies — uses only the Go standard library.
+
+package main
+
+import (
+	"flag"
+	"fmt"
+	"image"
+	"image/color"
+	_ "image/jpeg"
+	_ "image/png"
+	"math"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+)
+
+// ─── Palette ──────────────────────────────────────────────────────────────────
+
+type paletteEntry struct {
+	r, g, b uint8
+	index   uint8 // 2bpp value
+}
+
+var palette = []paletteEntry{
+	{0, 0, 0, 0},       // black
+	{255, 255, 255, 1},  // white
+	{255, 215, 0, 2},    // yellow
+	{255, 0, 0, 3},      // red
+}
+
+func nearestPaletteIndex(r, g, b uint8) uint8 {
+	bestIdx := uint8(0)
+	bestDist := uint32(math.MaxUint32)
+	for _, e := range palette {
+		dr := int32(r) - int32(e.r)
+		dg := int32(g) - int32(e.g)
+		db := int32(b) - int32(e.b)
+		d := uint32(dr*dr + dg*dg + db*db)
+		if d < bestDist {
+			bestDist = d
+			bestIdx = e.index
+		}
+	}
+	return bestIdx
+}
+
+// ─── RGBA helpers ─────────────────────────────────────────────────────────────
+
+func pixelAt(img image.Image, x, y int) (r, g, b, a uint8) {
+	c := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
+	return c.R, c.G, c.B, c.A
+}
+
+func luma(r, g, b uint8) uint8 {
+	return uint8(0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b))
+}
+
+// ─── Resize (nearest-neighbour, no external deps) ─────────────────────────────
+
+func resizeNN(src image.Image, newW, newH int) image.Image {
+	srcB := src.Bounds()
+	srcW := srcB.Max.X - srcB.Min.X
+	srcH := srcB.Max.Y - srcB.Min.Y
+	dst := image.NewNRGBA(image.Rect(0, 0, newW, newH))
+	for y := 0; y < newH; y++ {
+		for x := 0; x < newW; x++ {
+			srcX := srcB.Min.X + x*srcW/newW
+			srcY := srcB.Min.Y + y*srcH/newH
+			dst.Set(x, y, color.NRGBAModel.Convert(src.At(srcX, srcY)))
+		}
+	}
+	return dst
+}
+
+// ─── Conversion: 2bpp ────────────────────────────────────────────────────────
+
+func convert2bpp(img image.Image, varName string) string {
+	bounds := img.Bounds()
+	w := bounds.Max.X - bounds.Min.X
+	h := bounds.Max.Y - bounds.Min.Y
+
+	// Pad width to multiple of 4
+	paddedW := ((w + 3) / 4) * 4
+	if paddedW != w {
+		fmt.Fprintf(os.Stderr, "  Note: width %d padded to %d (must be multiple of 4 for 2bpp)\n", w, paddedW)
+	}
+	rowBytes := paddedW / 4
+	data := make([]byte, 0, h*rowBytes)
+
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for byteIdx := 0; byteIdx < rowBytes; byteIdx++ {
+			var packed byte
+			for bit := 0; bit < 4; bit++ {
+				px := bounds.Min.X + byteIdx*4 + bit
+				var colorIdx uint8
+				if px < bounds.Max.X {
+					r, g, b, a := pixelAt(img, px, y)
+					if a < 128 {
+						colorIdx = 1 // transparent → white
+					} else {
+						colorIdx = nearestPaletteIndex(r, g, b)
+					}
+				} else {
+					colorIdx = 1 // padding → white
+				}
+				packed = (packed << 2) | (colorIdx & 0x03)
+			}
+			data = append(data, packed)
+		}
+	}
+
+	return formatOutput(varName, paddedW, h, "2bpp", rowBytes, data)
+}
+
+// ─── Conversion: 1bpp ────────────────────────────────────────────────────────
+
+func convert1bpp(img image.Image, varName string, threshold uint8) string {
+	bounds := img.Bounds()
+	w := bounds.Max.X - bounds.Min.X
+	h := bounds.Max.Y - bounds.Min.Y
+
+	rowBytes := (w + 7) / 8
+	data := make([]byte, 0, h*rowBytes)
+
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for byteIdx := 0; byteIdx < rowBytes; byteIdx++ {
+			var packed byte
+			for bit := 0; bit < 8; bit++ {
+				px := bounds.Min.X + byteIdx*8 + bit
+				var setBit byte
+				if px < bounds.Max.X {
+					r, g, b, a := pixelAt(img, px, y)
+					var l uint8
+					if a < 128 {
+						l = 255 // transparent → background
+					} else {
+						l = luma(r, g, b)
+					}
+					if l <= threshold {
+						setBit = 1
+					}
+				}
+				packed = (packed << 1) | setBit
+			}
+			data = append(data, packed)
+		}
+	}
+
+	return formatOutput(varName, w, h, "1bpp", rowBytes, data)
+}
+
+// ─── Output formatter ─────────────────────────────────────────────────────────
+
+func formatOutput(varName string, w, h int, mode string, rowBytes int, data []byte) string {
+	total := len(data)
+	drawFn := "drawBitmap" + strings.Replace(mode, "b", "B", 1)
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "// %s — %d×%d px, %s, %d bytes/row, %d bytes total\n", varName, w, h, mode, rowBytes, total)
+	fmt.Fprintf(&sb, "// Generated by bitmap_convert.go\n")
+	fmt.Fprintf(&sb, "// Usage: display.%s(x, y, %d, %d, %s);\n", drawFn, w, h, varName)
+	fmt.Fprintf(&sb, "\n")
+	fmt.Fprintf(&sb, "static const uint8_t %s[] PROGMEM = {\n", varName)
+
+	for i := 0; i < total; i += 16 {
+		end := i + 16
+		if end > total {
+			end = total
+		}
+		chunk := data[i:end]
+		parts := make([]string, len(chunk))
+		for j, b := range chunk {
+			parts[j] = fmt.Sprintf("0x%02X", b)
+		}
+		fmt.Fprintf(&sb, "  %s,\n", strings.Join(parts, ", "))
+	}
+
+	fmt.Fprintf(&sb, "};\n")
+	return sb.String()
+}
+
+// ─── main ─────────────────────────────────────────────────────────────────────
+
+func main() {
+	mode      := flag.String("mode", "2bpp", "Output bit depth: 1bpp or 2bpp")
+	varName   := flag.String("name", "", "C variable name (default: filename stem)")
+	outFile   := flag.String("output", "", "Output .h file (default: <stem>_<mode>.h)")
+	threshold := flag.Uint("threshold", 128, "1bpp luminance threshold 0-255")
+	resize    := flag.String("resize", "", "Resize before converting, e.g. 64x64")
+	flag.Parse()
+
+	if flag.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "Usage: bitmap_convert [flags] <input.png>")
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
+
+	if *mode != "1bpp" && *mode != "2bpp" {
+		fmt.Fprintln(os.Stderr, "Error: -mode must be 1bpp or 2bpp")
+		os.Exit(1)
+	}
+
+	inputPath := flag.Arg(0)
+	f, err := os.Open(inputPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot open %s: %v\n", inputPath, err)
+		os.Exit(1)
+	}
+	defer f.Close()
+
+	img, _, err := image.Decode(f)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot decode image: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Optional resize
+	if *resize != "" {
+		parts := strings.SplitN(strings.ToLower(*resize), "x", 2)
+		if len(parts) != 2 {
+			fmt.Fprintln(os.Stderr, "Error: -resize must be WxH, e.g. 64x64")
+			os.Exit(1)
+		}
+		rw, err1 := strconv.Atoi(parts[0])
+		rh, err2 := strconv.Atoi(parts[1])
+		if err1 != nil || err2 != nil || rw <= 0 || rh <= 0 {
+			fmt.Fprintln(os.Stderr, "Error: -resize values must be positive integers")
+			os.Exit(1)
+		}
+		img = resizeNN(img, rw, rh)
+		fmt.Fprintf(os.Stderr, "  Resized to %d×%d\n", rw, rh)
+	}
+
+	// Derive variable name from filename if not provided
+	stem := strings.TrimSuffix(filepath.Base(inputPath), filepath.Ext(inputPath))
+	stem = strings.NewReplacer("-", "_", " ", "_").Replace(stem)
+	name := *varName
+	if name == "" {
+		name = stem
+	}
+
+	// Derive output path if not provided
+	outPath := *outFile
+	if outPath == "" {
+		dir := filepath.Dir(inputPath)
+		outPath = filepath.Join(dir, stem+"_"+*mode+".h")
+	}
+
+	bounds := img.Bounds()
+	w := bounds.Max.X - bounds.Min.X
+	h := bounds.Max.Y - bounds.Min.Y
+	fmt.Fprintf(os.Stderr, "Converting '%s' (%d×%d) → %s → '%s'\n", inputPath, w, h, *mode, outPath)
+
+	var output string
+	switch *mode {
+	case "2bpp":
+		output = convert2bpp(img, name)
+	case "1bpp":
+		output = convert1bpp(img, name, uint8(*threshold))
+	}
+
+	if err := os.WriteFile(outPath, []byte(output), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot write output: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Fprintf(os.Stderr, "  Written to %s\n", outPath)
+	fmt.Fprintf(os.Stderr, "  Include in your sketch: #include \"%s\"\n", filepath.Base(outPath))
+}
