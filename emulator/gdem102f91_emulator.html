@@ -40,20 +40,53 @@
 
   /* ── Layout ─────────────────────────────────────────────────────────── */
   #app {
-    display: grid;
-    grid-template-rows: 48px 1fr;
-    grid-template-columns: 1fr 380px;
+    display: flex;
+    flex-direction: column;
     height: 100vh;
-    gap: 0;
+  }
+
+  #main-row {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── Resizer ─────────────────────────────────────────────────────────── */
+  #resizer {
+    width: 5px;
+    flex-shrink: 0;
+    background: var(--border);
+    cursor: col-resize;
+    position: relative;
+    transition: background 0.15s;
+    z-index: 10;
+    user-select: none;
+  }
+  #resizer:hover,
+  #resizer.dragging {
+    background: var(--accent);
+  }
+  #resizer::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 1px;
+    height: 32px;
+    background: currentColor;
+    opacity: 0.35;
+    border-radius: 1px;
   }
 
   /* ── Toolbar ─────────────────────────────────────────────────────────── */
   #toolbar {
-    grid-column: 1 / -1;
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     gap: 16px;
     padding: 0 20px;
+    height: 48px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
   }
@@ -129,7 +162,8 @@
     flex-direction: column;
     overflow: hidden;
     background: var(--bg);
-    border-right: 1px solid var(--border);
+    border-right: none;
+    min-width: 200px;
   }
 
   #preview-header {
@@ -230,6 +264,7 @@
     flex-direction: column;
     overflow: hidden;
     background: var(--surface);
+    min-width: 200px;
   }
 
   #editor-header {
@@ -381,48 +416,55 @@
     </div>
   </div>
 
-  <!-- Preview pane -->
-  <div id="preview-pane">
-    <div id="preview-header">
-      <span class="pane-label">Display Preview</span>
-      <span id="scale-display">scale: 1×</span>
-    </div>
-    <div id="canvas-container">
-      <div id="display-frame">
-        <div id="display-bezel">
-          <div id="canvas-wrapper">
-            <canvas id="epd-canvas" width="960" height="640"></canvas>
-            <div id="refresh-overlay"></div>
-            <div id="render-progress"></div>
+  <div id="main-row">
+
+    <!-- Preview pane -->
+    <div id="preview-pane">
+      <div id="preview-header">
+        <span class="pane-label">Display Preview</span>
+        <span id="scale-display">scale: 1×</span>
+      </div>
+      <div id="canvas-container">
+        <div id="display-frame">
+          <div id="display-bezel">
+            <div id="canvas-wrapper">
+              <canvas id="epd-canvas" width="960" height="640"></canvas>
+              <div id="refresh-overlay"></div>
+              <div id="render-progress"></div>
+            </div>
           </div>
         </div>
       </div>
     </div>
-  </div>
 
-  <!-- Editor pane -->
-  <div id="editor-pane">
-    <div id="editor-header">
-      <div id="editor-tabs">
-        <div class="tab active" onclick="switchTab('scene')">scene.js</div>
-        <div class="tab" onclick="switchTab('api')">API Cheatsheet</div>
-      </div>
-      <span class="kbd">Ctrl</span>&nbsp;<span class="kbd">↵</span>&nbsp;<span style="font-size:10px;color:var(--muted)">to render</span>
-    </div>
-    <div id="editor-area">
-      <textarea id="scene-editor" spellcheck="false" placeholder="Write your scene here..."></textarea>
-      <textarea id="api-editor" spellcheck="false" readonly style="display:none;color:var(--muted)"></textarea>
-    </div>
-    <div id="console-area">
-      <div id="console-header">
-        <span class="pane-label">Console</span>
-        <button class="btn-ghost" style="padding:3px 8px;font-size:10px" onclick="clearConsole()">Clear</button>
-      </div>
-      <div id="console-output"></div>
-    </div>
-  </div>
+    <!-- Drag handle -->
+    <div id="resizer"></div>
 
-</div>
+    <!-- Editor pane -->
+    <div id="editor-pane">
+      <div id="editor-header">
+        <div id="editor-tabs">
+          <div class="tab active" onclick="switchTab('scene')">scene.js</div>
+          <div class="tab" onclick="switchTab('dither')">Dither & Bitmap</div>
+          <div class="tab" onclick="switchTab('api')">API Cheatsheet</div>
+        </div>
+        <span class="kbd">Ctrl</span>&nbsp;<span class="kbd">↵</span>&nbsp;<span style="font-size:10px;color:var(--muted)">to render</span>
+      </div>
+      <div id="editor-area">
+        <textarea id="scene-editor" spellcheck="false" placeholder="Write your scene here..."></textarea>
+        <textarea id="dither-editor" spellcheck="false" style="display:none"></textarea>
+        <textarea id="api-editor" spellcheck="false" readonly style="display:none"></textarea>
+      </div>
+      <div id="console-area">
+        <div id="console-header">
+          <span class="pane-label">Console</span>
+          <button class="btn-ghost" style="padding:3px 8px;font-size:10px" onclick="clearConsole()">Clear</button>
+        </div>
+        <div id="console-output"></div>
+      </div>
+    </div>
+
+  </div><!-- /#main-row -->
 
 <script>
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -465,6 +507,60 @@ function fitCanvas() {
     'scale: ' + (scale < 1 ? scale.toFixed(2) : '1') + '×';
 }
 window.addEventListener('resize', fitCanvas);
+
+// ── Resizer ───────────────────────────────────────────────────────────────────
+(function() {
+  const resizer     = document.getElementById('resizer');
+  const previewPane = document.getElementById('preview-pane');
+  const editorPane  = document.getElementById('editor-pane');
+  const mainRow     = document.getElementById('main-row');
+  const EDITOR_MIN  = 240;
+  const PREVIEW_MIN = 300;
+
+  // Restore saved split or default to ~60/40
+  const saved = localStorage.getItem('epd-editor-width');
+  if (saved) {
+    editorPane.style.width = saved + 'px';
+    editorPane.style.flexShrink = '0';
+    previewPane.style.flex = '1';
+  } else {
+    editorPane.style.width = '420px';
+    editorPane.style.flexShrink = '0';
+    previewPane.style.flex = '1';
+  }
+
+  let dragging = false, startX = 0, startEditorW = 0;
+
+  resizer.addEventListener('mousedown', e => {
+    dragging = true;
+    startX = e.clientX;
+    startEditorW = editorPane.getBoundingClientRect().width;
+    resizer.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const dx = startX - e.clientX;           // positive = dragging left = editor grows
+    const totalW = mainRow.getBoundingClientRect().width - 5; // subtract resizer width
+    let newEditorW = startEditorW + dx;
+    newEditorW = Math.max(EDITOR_MIN, Math.min(newEditorW, totalW - PREVIEW_MIN));
+    editorPane.style.width = newEditorW + 'px';
+    fitCanvas();
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    resizer.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    // Persist split position
+    localStorage.setItem('epd-editor-width', editorPane.getBoundingClientRect().width);
+  });
+})();
 
 // ── E-ink Display Emulator API ───────────────────────────────────────────────
 const EPD = {
@@ -746,6 +842,112 @@ const EPD = {
     this.drawString(x + 16, y + 1, percent.toFixed(1) + '%', color, 1);
   },
 
+  // ── Dithered fills ────────────────────────────────────────────────────────
+  // Bayer 4×4 ordered dither. density: 0=all bg, 16=all fg.
+  // Useful steps: 4 (~25%), 8 (~50%), 12 (~75%).
+  fillRectDither(x, y, w, h, fgColor, bgColor, density) {
+    const bayer = [
+      [ 0,  8,  2, 10],
+      [12,  4, 14,  6],
+      [ 3, 11,  1,  9],
+      [15,  7, 13,  5],
+    ];
+    density = Math.max(0, Math.min(16, density));
+    x = Math.round(x); y = Math.round(y);
+    w = Math.round(w); h = Math.round(h);
+    // Draw pixel-by-pixel using ImageData for performance
+    const imgData = ctx.getImageData(x, y, w, h);
+    const fg = this._colorRGBA(fgColor);
+    const bg = this._colorRGBA(bgColor);
+    for (let row = 0; row < h; row++) {
+      for (let col = 0; col < w; col++) {
+        const threshold = bayer[(y + row) & 3][(x + col) & 3];
+        const c = density > threshold ? fg : bg;
+        const idx = (row * w + col) * 4;
+        imgData.data[idx]     = c[0];
+        imgData.data[idx + 1] = c[1];
+        imgData.data[idx + 2] = c[2];
+        imgData.data[idx + 3] = 255;
+      }
+    }
+    ctx.putImageData(imgData, x, y);
+  },
+
+  // Simple 1×1 checkerboard — fixed 50% blend between two colors.
+  fillRectCheckerboard(x, y, w, h, color1, color2) {
+    x = Math.round(x); y = Math.round(y);
+    w = Math.round(w); h = Math.round(h);
+    const imgData = ctx.getImageData(x, y, w, h);
+    const c1 = this._colorRGBA(color1);
+    const c2 = this._colorRGBA(color2);
+    for (let row = 0; row < h; row++) {
+      for (let col = 0; col < w; col++) {
+        const c = (((x + col) ^ (y + row)) & 1) ? c2 : c1;
+        const idx = (row * w + col) * 4;
+        imgData.data[idx]     = c[0];
+        imgData.data[idx + 1] = c[1];
+        imgData.data[idx + 2] = c[2];
+        imgData.data[idx + 3] = 255;
+      }
+    }
+    ctx.putImageData(imgData, x, y);
+  },
+
+  // Helper: parse a color name to [r,g,b]
+  _colorRGBA(c) {
+    const hex = (COLORS[c] || COLORS.BLACK).replace('#','');
+    return [
+      parseInt(hex.slice(0,2),16),
+      parseInt(hex.slice(2,4),16),
+      parseInt(hex.slice(4,6),16),
+    ];
+  },
+
+  // ── Bitmaps ───────────────────────────────────────────────────────────────
+  // Draw a 2bpp 4-color bitmap. Data is a Uint8Array (or plain Array) of bytes.
+  // Each byte encodes 4 pixels: bits [7:6]=px0, [5:4]=px1, [3:2]=px2, [1:0]=px3.
+  // Encoding: 00=black, 01=white, 10=yellow, 11=red.  w must be a multiple of 4.
+  // In the emulator you define bitmaps inline as arrays of hex bytes, e.g.:
+  //   const bmp = new Uint8Array([0x00,0x55,0xAA,0xFF, ...]);
+  //   drawBitmap2bpp(x, y, 16, 4, bmp);
+  drawBitmap2bpp(x, y, w, h, bitmap) {
+    const palette = [EPD_BLACK, EPD_WHITE, EPD_YELLOW, EPD_RED];
+    const rowBytes = Math.ceil(w / 4);
+    for (let row = 0; row < h; row++) {
+      for (let byteIdx = 0; byteIdx < rowBytes; byteIdx++) {
+        const b = bitmap[row * rowBytes + byteIdx];
+        for (let px = 0; px < 4; px++) {
+          const col = byteIdx * 4 + px;
+          if (col >= w) break;
+          const colorCode = (b >> (6 - px * 2)) & 0x03;
+          this.setPixel(x + col, y + row, palette[colorCode]);
+        }
+      }
+    }
+  },
+
+  // Draw a 1bpp monochrome bitmap. Each row is ceil(w/8) bytes, MSB = leftmost pixel.
+  // Set bits draw fgColor; clear bits draw bgColor.
+  // Pass bgColor = null to make background transparent (skip clear pixels).
+  drawBitmap1bpp(x, y, w, h, bitmap, fgColor, bgColor) {
+    const rowBytes = Math.ceil(w / 8);
+    for (let row = 0; row < h; row++) {
+      for (let byteIdx = 0; byteIdx < rowBytes; byteIdx++) {
+        const b = bitmap[row * rowBytes + byteIdx];
+        for (let bit = 0; bit < 8; bit++) {
+          const col = byteIdx * 8 + bit;
+          if (col >= w) break;
+          const set = (b >> (7 - bit)) & 1;
+          if (set) {
+            this.setPixel(x + col, y + row, fgColor);
+          } else if (bgColor != null) {
+            this.setPixel(x + col, y + row, bgColor);
+          }
+        }
+      }
+    }
+  },
+
   width()  { return W; },
   height() { return H; },
 };
@@ -785,6 +987,10 @@ function makeSceneContext() {
     drawBadge:          (x,y,t,bg,fg)       => d.drawBadge(x,y,t,bg,fg),
     drawDivider:        (x,y,w,c,l,lc)      => d.drawDivider(x,y,w,c,l,lc),
     drawTrend:          (x,y,p,u,c)         => d.drawTrend(x,y,p,u,c),
+    fillRectDither:     (x,y,w,h,fg,bg,den) => d.fillRectDither(x,y,w,h,fg,bg,den),
+    fillRectCheckerboard:(x,y,w,h,c1,c2)   => d.fillRectCheckerboard(x,y,w,h,c1,c2),
+    drawBitmap2bpp:     (x,y,w,h,bmp)      => d.drawBitmap2bpp(x,y,w,h,bmp),
+    drawBitmap1bpp:     (x,y,w,h,bmp,fg,bg)=> d.drawBitmap1bpp(x,y,w,h,bmp,fg,bg),
     width:              ()                  => W,
     height:             ()                  => H,
     console: { log: (...a) => log(a.join(' '), 'log') }
@@ -793,7 +999,12 @@ function makeSceneContext() {
 
 // ── Run ──────────────────────────────────────────────────────────────────────
 function runScene() {
-  const code = document.getElementById('scene-editor').value;
+  // Use whichever editable pane is currently visible
+  const sceneEl  = document.getElementById('scene-editor');
+  const ditherEl = document.getElementById('dither-editor');
+  const code = sceneEl.style.display !== 'none'
+    ? sceneEl.value
+    : ditherEl.value;
   const overlay = document.getElementById('refresh-overlay');
 
   // E-ink flicker effect
@@ -841,8 +1052,9 @@ function clearConsole() {
 function switchTab(tab) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   event.target.classList.add('active');
-  document.getElementById('scene-editor').style.display = tab === 'scene' ? 'block' : 'none';
-  document.getElementById('api-editor').style.display   = tab === 'api'   ? 'block' : 'none';
+  document.getElementById('scene-editor').style.display  = tab === 'scene'  ? 'block' : 'none';
+  document.getElementById('dither-editor').style.display = tab === 'dither' ? 'block' : 'none';
+  document.getElementById('api-editor').style.display    = tab === 'api'    ? 'block' : 'none';
 }
 
 // ── Export ────────────────────────────────────────────────────────────────────
@@ -990,6 +1202,45 @@ drawBadge(x, y, text, bg, fg)
 drawDivider(x, y, w, color, label, labelColor)
 drawTrend(x, y, percent, upBool, color)
 
+// ── Dithered fills ────────────────────────────────────────────────────────
+// Bayer 4×4 ordered dither mixing fgColor and bgColor.
+// density: 0 = all bg, 16 = all fg
+// Useful steps: 4 (~25% fg), 8 (~50% fg), 12 (~75% fg)
+fillRectDither(x, y, w, h, fgColor, bgColor, density)
+
+// Simple 1×1 checkerboard — fixed 50% optical blend.
+fillRectCheckerboard(x, y, w, h, color1, color2)
+
+// ── Bitmaps ───────────────────────────────────────────────────────────────
+// 2bpp 4-color bitmap. Each byte = 4 pixels (MSB first, 2 bits each).
+// Encoding: 00=black  01=white  10=yellow  11=red
+// w must be a multiple of 4. Data is a Uint8Array or plain Array.
+drawBitmap2bpp(x, y, w, h, bitmapData)
+
+// Example — 8×2 px test pattern (2 bytes per row):
+// const bmp2 = new Uint8Array([
+//   0x00, 0x55,  // row 0: black black black black | white white white white
+//   0xAA, 0xFF,  // row 1: yell  yell  yell  yell  | red   red   red   red
+// ]);
+// drawBitmap2bpp(100, 100, 8, 2, bmp2);
+
+// 1bpp monochrome bitmap. Each byte = 8 pixels, MSB = leftmost.
+// Set bits → fgColor, clear bits → bgColor (pass null for transparent bg).
+drawBitmap1bpp(x, y, w, h, bitmapData, fgColor, bgColor)
+
+// Example — 8×8 smiley face:
+// const smiley = new Uint8Array([
+//   0b00111100,  // row 0
+//   0b01000010,  // row 1
+//   0b10100101,  // row 2
+//   0b10000001,  // row 3
+//   0b10100101,  // row 4
+//   0b10011001,  // row 5
+//   0b01000010,  // row 6
+//   0b00111100,  // row 7
+// ]);
+// drawBitmap1bpp(200, 200, 8, 8, smiley, EPD_BLACK, EPD_WHITE);
+
 // ── Utility ───────────────────────────────────────────────────────────────
 width()   → 960
 height()  → 640
@@ -1008,8 +1259,132 @@ console.log(...)
 //   Y618-640  Footer bar
 `;
 
+const DITHER_SCENE = `// ── Dither & Bitmap Demo ──────────────────────────────────────────────────
+// This is a read-only reference. Copy sections into scene.js to use them.
+// Press ▶ Render (or Ctrl+Enter) while on scene.js to preview your design.
+
+// ── fillRectDither — Bayer 4×4 ordered dither ─────────────────────────────
+// density: 0 = all bgColor, 16 = all fgColor
+// Useful steps: 4 (~25%), 8 (~50%), 12 (~75%)
+
+// Density ramp: black over white
+const rampW = 120, rampH = 40, rampY = 60;
+[0, 2, 4, 6, 8, 10, 12, 14, 16].forEach((d, i) => {
+  fillRectDither(20 + i * (rampW + 8), rampY, rampW, rampH,
+    EPD_BLACK, EPD_WHITE, d);
+  drawRect(20 + i * (rampW + 8), rampY, rampW, rampH, EPD_BLACK);
+  drawStringCentered(20 + i * (rampW + 8), rampY + rampH + 4, rampW,
+    d + '/16', EPD_BLACK, 1);
+});
+drawString(20, rampY - 18, 'BLACK over WHITE — density ramp', EPD_BLACK, 1);
+
+// Red over white ramp
+[0, 4, 8, 12, 16].forEach((d, i) => {
+  fillRectDither(20 + i * (rampW + 8), 170, rampW, rampH,
+    EPD_RED, EPD_WHITE, d);
+  drawRect(20 + i * (rampW + 8), 170, rampW, rampH, EPD_BLACK);
+});
+drawString(20, 152, 'RED over WHITE — 0% / 25% / 50% / 75% / 100%', EPD_BLACK, 1);
+
+// Yellow over white ramp
+[0, 4, 8, 12, 16].forEach((d, i) => {
+  fillRectDither(20 + i * (rampW + 8), 240, rampW, rampH,
+    EPD_YELLOW, EPD_WHITE, d);
+  drawRect(20 + i * (rampW + 8), 240, rampW, rampH, EPD_BLACK);
+});
+drawString(20, 222, 'YELLOW over WHITE — 0% / 25% / 50% / 75% / 100%', EPD_BLACK, 1);
+
+// Cross-color mixing
+fillRectDither(20,  310, rampW, rampH, EPD_RED,    EPD_YELLOW, 8);
+fillRectDither(136, 310, rampW, rampH, EPD_BLACK,  EPD_RED,    8);
+fillRectDither(252, 310, rampW, rampH, EPD_BLACK,  EPD_YELLOW, 8);
+fillRectDither(368, 310, rampW, rampH, EPD_YELLOW, EPD_RED,    8);
+[EPD_RED,EPD_BLACK,EPD_BLACK,EPD_YELLOW].forEach((c,i) =>
+  drawRect(20 + i * 116, 310, rampW, rampH, EPD_BLACK));
+drawString(20, 292, '50% cross-color mixes: R+Y  B+R  B+Y  Y+R', EPD_BLACK, 1);
+
+// ── fillRectCheckerboard — fixed 50% blend ────────────────────────────────
+drawDivider(20, 374, 920, EPD_BLACK, 'CHECKERBOARD (fixed 50%)', EPD_BLACK);
+fillRectCheckerboard(20,  390, rampW, rampH, EPD_BLACK,  EPD_WHITE);
+fillRectCheckerboard(136, 390, rampW, rampH, EPD_RED,    EPD_WHITE);
+fillRectCheckerboard(252, 390, rampW, rampH, EPD_YELLOW, EPD_WHITE);
+fillRectCheckerboard(368, 390, rampW, rampH, EPD_RED,    EPD_YELLOW);
+fillRectCheckerboard(484, 390, rampW, rampH, EPD_BLACK,  EPD_RED);
+[0,1,2,3,4].forEach(i => drawRect(20 + i * 116, 390, rampW, rampH, EPD_BLACK));
+
+// ── drawBitmap1bpp — 1-bit monochrome bitmaps ─────────────────────────────
+drawDivider(20, 454, 920, EPD_BLACK, 'BITMAP 1BPP', EPD_BLACK);
+
+// 8×8 smiley face — drawn at 1×, 2×, 3×, 4× scale using setPixel loops
+const smiley8 = [
+  0b00111100,
+  0b01000010,
+  0b10100101,
+  0b10000001,
+  0b10100101,
+  0b10011001,
+  0b01000010,
+  0b00111100,
+];
+const smileyData = new Uint8Array(smiley8);
+
+// Same bitmap, four colors, large scale (4× = 32px)
+const bmpColors = [EPD_BLACK, EPD_RED, EPD_YELLOW, EPD_BLACK];
+const bmpBgs    = [EPD_WHITE, EPD_WHITE, EPD_WHITE, EPD_YELLOW];
+bmpColors.forEach((fg, i) => {
+  // Scale manually by drawing each bit as a filled square
+  for (let row = 0; row < 8; row++) {
+    const byte = smileyData[row];
+    for (let bit = 0; bit < 8; bit++) {
+      if ((byte >> (7 - bit)) & 1) {
+        fillRect(20 + i * 112 + bit * 12, 472 + row * 12, 12, 12, fg);
+      }
+    }
+  }
+  // Background fill first (behind pixels)
+  fillRectCheckerboard(20 + i * 112, 472, 96, 96, bmpBgs[i], EPD_WHITE);
+  for (let row = 0; row < 8; row++) {
+    const byte = smileyData[row];
+    for (let bit = 0; bit < 8; bit++) {
+      if ((byte >> (7 - bit)) & 1) {
+        fillRect(20 + i * 112 + bit * 12, 472 + row * 12, 12, 12, fg);
+      }
+    }
+  }
+  drawRect(20 + i * 112, 472, 96, 96, EPD_BLACK);
+});
+drawString(20, 576, '1bpp bitmap rendered at 12px/pixel in BLACK, RED, YELLOW, BLACK-on-YELLOW', EPD_BLACK, 1);
+
+// ── drawBitmap2bpp — native 4-color bitmap ────────────────────────────────
+drawDivider(20, 600, 920, EPD_BLACK, 'BITMAP 2BPP (native 4-color)', EPD_BLACK);
+
+// 8×4 test pattern: each row cycles through all 4 colors
+// 2 bits/pixel, 4px/byte → 2 bytes per 8-pixel row
+const bmp2data = new Uint8Array([
+  0b00011011,  // row 0: B W Y R  B W Y R  → 00 01 10 11  00 01 10 11
+  0b00011011,
+  0b11100100,  // row 1: R Y W B  R Y W B  → 11 10 01 00  11 10 01 00
+  0b11100100,
+]);
+drawBitmap2bpp(20, 616, 8, 4, bmp2data);  // tiny native size
+// Scale it up manually so it's visible
+const pal = [EPD_BLACK, EPD_WHITE, EPD_YELLOW, EPD_RED];
+for (let row = 0; row < 4; row++) {
+  for (let col = 0; col < 8; col++) {
+    const byteIdx = row * 2 + Math.floor(col / 4);
+    const shift = 6 - (col % 4) * 2;
+    const code = (bmp2data[byteIdx] >> shift) & 0x03;
+    fillRect(150 + col * 32, 608 + row * 8, 32, 8, pal[code]);
+  }
+}
+drawRect(150, 608, 256, 32, EPD_BLACK);
+drawString(20, 616, 'native', EPD_BLACK, 1);
+drawString(150, 642, '8-pixel rows scaled up — 2bpp encoding: 00=B 01=W 10=Y 11=R', EPD_BLACK, 1);
+`;
+
 function loadExample() {
   document.getElementById('scene-editor').value = EXAMPLE_SCENE;
+  document.getElementById('dither-editor').value = DITHER_SCENE;
   document.getElementById('api-editor').value = API_CHEATSHEET;
   runScene();
 }
@@ -1025,6 +1400,7 @@ document.addEventListener('keydown', e => {
 // ── Init ──────────────────────────────────────────────────────────────────────
 fitCanvas();
 document.getElementById('api-editor').value = API_CHEATSHEET;
+document.getElementById('dither-editor').value = DITHER_SCENE;
 loadExample();
 log('GDEM102F91 Emulator ready. 960×640 · 4-color e-paper.', 'info');
 log('Edit the scene and press Ctrl+Enter or ▶ Render to preview.', 'info');
