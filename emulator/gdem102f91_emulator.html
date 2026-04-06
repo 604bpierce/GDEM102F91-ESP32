@@ -1,0 +1,1033 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GDEM102F91 Emulator</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0d0f12;
+    --surface:  #13161b;
+    --panel:    #1a1e25;
+    --border:   #252a34;
+    --muted:    #3a4150;
+    --text:     #c8cdd6;
+    --bright:   #e8ecf2;
+    --accent:   #4f8ef7;
+    --accent2:  #f7924f;
+    --green:    #4fc98a;
+    --red:      #f74f6a;
+
+    /* E-ink panel colors */
+    --epd-bg:     #e8e4da;
+    --epd-black:  #1a1a1a;
+    --epd-white:  #f0ece0;
+    --epd-yellow: #d4a017;
+    --epd-red:    #c0392b;
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    overflow: hidden;
+  }
+
+  /* ── Layout ─────────────────────────────────────────────────────────── */
+  #app {
+    display: grid;
+    grid-template-rows: 48px 1fr;
+    grid-template-columns: 1fr 380px;
+    height: 100vh;
+    gap: 0;
+  }
+
+  /* ── Toolbar ─────────────────────────────────────────────────────────── */
+  #toolbar {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .logo {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 15px;
+    color: var(--bright);
+    letter-spacing: -0.5px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .logo-chip {
+    background: var(--accent);
+    color: #fff;
+    font-size: 9px;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 3px;
+    letter-spacing: 0.5px;
+  }
+
+  .toolbar-sep { width: 1px; height: 24px; background: var(--border); flex-shrink: 0; }
+
+  .toolbar-info {
+    font-size: 11px;
+    color: var(--muted);
+    flex: 1;
+  }
+
+  .toolbar-btns { display: flex; gap: 8px; }
+
+  button {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.1s;
+  }
+  button:active { transform: scale(0.97); }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+  .btn-primary:hover { opacity: 0.88; }
+
+  .btn-ghost {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn-ghost:hover { background: var(--border); }
+
+  .btn-danger {
+    background: transparent;
+    color: var(--red);
+    border: 1px solid var(--red);
+  }
+  .btn-danger:hover { background: var(--red); color: #fff; }
+
+  /* ── Preview pane ────────────────────────────────────────────────────── */
+  #preview-pane {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg);
+    border-right: 1px solid var(--border);
+  }
+
+  #preview-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .pane-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  #scale-display {
+    font-size: 10px;
+    color: var(--muted);
+  }
+
+  #canvas-container {
+    flex: 1;
+    overflow: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  #display-frame {
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  /* E-ink bezel effect */
+  #display-bezel {
+    background: #2a2a2a;
+    border-radius: 6px;
+    padding: 12px;
+    box-shadow:
+      0 0 0 1px #1a1a1a,
+      0 20px 60px rgba(0,0,0,0.6),
+      inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+
+  #canvas-wrapper {
+    position: relative;
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  /* Subtle e-ink grain texture overlay */
+  #canvas-wrapper::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    opacity: 0.5;
+    mix-blend-mode: multiply;
+  }
+
+  #epd-canvas {
+    display: block;
+    image-rendering: pixelated;
+  }
+
+  /* Refresh animation overlay */
+  #refresh-overlay {
+    position: absolute;
+    inset: 0;
+    background: var(--epd-black);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.08s;
+    border-radius: 2px;
+  }
+  #refresh-overlay.flicker { animation: epd-refresh 0.6s ease-in-out; }
+
+  @keyframes epd-refresh {
+    0%   { opacity: 0; }
+    15%  { opacity: 1; }
+    30%  { opacity: 0.2; }
+    50%  { opacity: 0.9; }
+    70%  { opacity: 0.1; }
+    85%  { opacity: 0.7; }
+    100% { opacity: 0; }
+  }
+
+  /* ── Editor pane ─────────────────────────────────────────────────────── */
+  #editor-pane {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--surface);
+  }
+
+  #editor-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  #editor-tabs {
+    display: flex;
+    gap: 2px;
+  }
+
+  .tab {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    color: var(--muted);
+    transition: all 0.15s;
+    user-select: none;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { background: var(--panel); color: var(--bright); }
+
+  #editor-area {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+  }
+
+  textarea {
+    width: 100%;
+    height: 100%;
+    background: var(--panel);
+    color: var(--bright);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    border: none;
+    outline: none;
+    resize: none;
+    padding: 16px;
+    tab-size: 4;
+    caret-color: var(--accent);
+  }
+
+  /* ── Console ─────────────────────────────────────────────────────────── */
+  #console-area {
+    height: 120px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  #console-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+
+  #console-output {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 16px;
+    background: var(--bg);
+    font-size: 11px;
+    line-height: 1.7;
+  }
+
+  .log-line { color: var(--text); }
+  .log-error { color: var(--red); }
+  .log-success { color: var(--green); }
+  .log-info { color: var(--accent); }
+
+  /* ── Status bar ──────────────────────────────────────────────────────── */
+  #statusbar {
+    grid-column: 1 / -1;
+    display: none; /* handled in footer of preview */
+  }
+
+  /* ── Shortcut hint ───────────────────────────────────────────────────── */
+  .kbd {
+    display: inline-block;
+    background: var(--border);
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 10px;
+    color: var(--text);
+  }
+
+  /* ── Render progress ─────────────────────────────────────────────────── */
+  #render-progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--accent);
+    transform-origin: left;
+    transform: scaleX(0);
+    transition: transform 0.4s ease;
+  }
+
+  /* ── Color swatches in toolbar ───────────────────────────────────────── */
+  .swatch-row { display: flex; gap: 6px; align-items: center; }
+  .swatch {
+    width: 14px; height: 14px;
+    border-radius: 2px;
+    border: 1px solid rgba(255,255,255,0.1);
+    flex-shrink: 0;
+  }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 3px; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Toolbar -->
+  <div id="toolbar">
+    <div class="logo">
+      <span>GDEM102F91</span>
+      <span class="logo-chip">EMULATOR</span>
+    </div>
+    <div class="toolbar-sep"></div>
+    <div class="toolbar-info">960 × 640 · 4-color e-paper · SSD2677</div>
+    <div class="swatch-row">
+      <div class="swatch" style="background:#1a1a1a" title="EPD_BLACK"></div>
+      <div class="swatch" style="background:#f0ece0" title="EPD_WHITE"></div>
+      <div class="swatch" style="background:#d4a017" title="EPD_YELLOW"></div>
+      <div class="swatch" style="background:#c0392b" title="EPD_RED"></div>
+    </div>
+    <div class="toolbar-sep"></div>
+    <div class="toolbar-btns">
+      <button class="btn-ghost" onclick="loadExample()">Load Example</button>
+      <button class="btn-ghost" onclick="downloadPNG()">Export PNG</button>
+      <button class="btn-primary" onclick="runScene()" title="Ctrl+Enter">▶ Render</button>
+    </div>
+  </div>
+
+  <!-- Preview pane -->
+  <div id="preview-pane">
+    <div id="preview-header">
+      <span class="pane-label">Display Preview</span>
+      <span id="scale-display">scale: 1×</span>
+    </div>
+    <div id="canvas-container">
+      <div id="display-frame">
+        <div id="display-bezel">
+          <div id="canvas-wrapper">
+            <canvas id="epd-canvas" width="960" height="640"></canvas>
+            <div id="refresh-overlay"></div>
+            <div id="render-progress"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Editor pane -->
+  <div id="editor-pane">
+    <div id="editor-header">
+      <div id="editor-tabs">
+        <div class="tab active" onclick="switchTab('scene')">scene.js</div>
+        <div class="tab" onclick="switchTab('api')">API Cheatsheet</div>
+      </div>
+      <span class="kbd">Ctrl</span>&nbsp;<span class="kbd">↵</span>&nbsp;<span style="font-size:10px;color:var(--muted)">to render</span>
+    </div>
+    <div id="editor-area">
+      <textarea id="scene-editor" spellcheck="false" placeholder="Write your scene here..."></textarea>
+      <textarea id="api-editor" spellcheck="false" readonly style="display:none;color:var(--muted)"></textarea>
+    </div>
+    <div id="console-area">
+      <div id="console-header">
+        <span class="pane-label">Console</span>
+        <button class="btn-ghost" style="padding:3px 8px;font-size:10px" onclick="clearConsole()">Clear</button>
+      </div>
+      <div id="console-output"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── Constants ────────────────────────────────────────────────────────────────
+const W = 960, H = 640;
+const COLORS = {
+  BLACK:  '#1a1a1a',
+  WHITE:  '#f0ece0',
+  YELLOW: '#d4a017',
+  RED:    '#c0392b',
+};
+const EPD_BLACK  = 'BLACK';
+const EPD_WHITE  = 'WHITE';
+const EPD_YELLOW = 'YELLOW';
+const EPD_RED    = 'RED';
+const PIXEL_BLACK  = 'BLACK';
+const PIXEL_WHITE  = 'WHITE';
+const PIXEL_YELLOW = 'YELLOW';
+const PIXEL_RED    = 'RED';
+
+// Icon IDs
+const ICON_CHECK=0,ICON_CROSS=1,ICON_WARNING=2,ICON_INFO=3,
+      ICON_ARROW_UP=4,ICON_ARROW_DOWN=5,ICON_CLOUD=6,
+      ICON_SERVER=7,ICON_CHART=8,ICON_LOCK=9;
+
+// Font sizes
+const FONT_SMALL=1,FONT_MEDIUM=2,FONT_LARGE=3,FONT_XLARGE=4;
+
+// ── Canvas setup ─────────────────────────────────────────────────────────────
+const canvas = document.getElementById('epd-canvas');
+const ctx = canvas.getContext('2d');
+
+function fitCanvas() {
+  const container = document.getElementById('canvas-container');
+  const bw = container.clientWidth - 48, bh = container.clientHeight - 48;
+  const scaleW = bw / W, scaleH = bh / H;
+  const scale = Math.min(scaleW, scaleH, 1);
+  canvas.style.width  = (W * scale) + 'px';
+  canvas.style.height = (H * scale) + 'px';
+  document.getElementById('scale-display').textContent =
+    'scale: ' + (scale < 1 ? scale.toFixed(2) : '1') + '×';
+}
+window.addEventListener('resize', fitCanvas);
+
+// ── E-ink Display Emulator API ───────────────────────────────────────────────
+const EPD = {
+  _color(c) { return COLORS[c] || COLORS.BLACK; },
+
+  clear(color = EPD_WHITE) {
+    ctx.fillStyle = this._color(color);
+    ctx.fillRect(0, 0, W, H);
+  },
+
+  setPixel(x, y, color) {
+    ctx.fillStyle = this._color(color);
+    ctx.fillRect(Math.round(x), Math.round(y), 1, 1);
+  },
+
+  drawLine(x0, y0, x1, y1, color) {
+    ctx.strokeStyle = this._color(color);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(Math.round(x0) + 0.5, Math.round(y0) + 0.5);
+    ctx.lineTo(Math.round(x1) + 0.5, Math.round(y1) + 0.5);
+    ctx.stroke();
+  },
+
+  drawHLine(x, y, w, color) { this.drawLine(x, y, x + w - 1, y, color); },
+  drawVLine(x, y, h, color) { this.drawLine(x, y, x, y + h - 1, color); },
+
+  drawRect(x, y, w, h, color) {
+    ctx.strokeStyle = this._color(color);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(Math.round(x) + 0.5, Math.round(y) + 0.5, Math.round(w) - 1, Math.round(h) - 1);
+  },
+
+  fillRect(x, y, w, h, color) {
+    ctx.fillStyle = this._color(color);
+    ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
+  },
+
+  drawRoundRect(x, y, w, h, r, color) {
+    ctx.strokeStyle = this._color(color);
+    ctx.lineWidth = 1;
+    this._roundRectPath(x + 0.5, y + 0.5, w - 1, h - 1, r);
+    ctx.stroke();
+  },
+
+  fillRoundRect(x, y, w, h, r, color) {
+    ctx.fillStyle = this._color(color);
+    this._roundRectPath(x, y, w, h, r);
+    ctx.fill();
+  },
+
+  _roundRectPath(x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.arcTo(x + w, y, x + w, y + r, r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+    ctx.lineTo(x + r, y + h);
+    ctx.arcTo(x, y + h, x, y + h - r, r);
+    ctx.lineTo(x, y + r);
+    ctx.arcTo(x, y, x + r, y, r);
+    ctx.closePath();
+  },
+
+  drawCircle(cx, cy, r, color) {
+    ctx.strokeStyle = this._color(color);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+  },
+
+  fillCircle(cx, cy, r, color) {
+    ctx.fillStyle = this._color(color);
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+  },
+
+  drawTriangle(x0, y0, x1, y1, x2, y2, color) {
+    ctx.strokeStyle = this._color(color);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.lineTo(x2, y2);
+    ctx.closePath(); ctx.stroke();
+  },
+
+  fillTriangle(x0, y0, x1, y1, x2, y2, color) {
+    ctx.fillStyle = this._color(color);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.lineTo(x2, y2);
+    ctx.closePath(); ctx.fill();
+  },
+
+  // ── Text ─────────────────────────────────────────────────────────────────
+  _fontPx(size) { return size * 8; },
+  _fontFamily(size) { return `bold ${size * 8}px 'JetBrains Mono', monospace`; },
+
+  drawChar(x, y, c, color, size) {
+    ctx.fillStyle = this._color(color);
+    ctx.font = this._fontFamily(size);
+    ctx.textBaseline = 'top';
+    ctx.fillText(c, x, y);
+  },
+
+  drawString(x, y, str, color, size) {
+    ctx.fillStyle = this._color(color);
+    ctx.font = this._fontFamily(size);
+    ctx.textBaseline = 'top';
+    ctx.fillText(String(str), x, y);
+  },
+
+  drawStringCentered(x, y, w, str, color, size) {
+    ctx.font = this._fontFamily(size);
+    const tw = ctx.measureText(String(str)).width;
+    this.drawString(x + (w - tw) / 2, y, str, color, size);
+  },
+
+  drawInt(x, y, value, color, size) {
+    this.drawString(x, y, String(Math.round(value)), color, size);
+  },
+
+  drawFloat(x, y, value, decimals, color, size) {
+    this.drawString(x, y, value.toFixed(decimals), color, size);
+  },
+
+  getStringWidth(str, size) {
+    ctx.font = this._fontFamily(size);
+    return ctx.measureText(String(str)).width;
+  },
+
+  getCharHeight(size) { return size * 8; },
+
+  // ── Icons ─────────────────────────────────────────────────────────────────
+  drawIcon(x, y, icon, size, color) {
+    const s = size * 8;
+    const c = this._color(color);
+    ctx.fillStyle = c;
+    ctx.strokeStyle = c;
+    ctx.lineWidth = Math.max(1, size);
+
+    switch(icon) {
+      case ICON_CHECK:
+        ctx.beginPath();
+        ctx.moveTo(x, y + s/2);
+        ctx.lineTo(x + s/3, y + s - 2);
+        ctx.lineTo(x + s - 2, y + 2);
+        ctx.stroke();
+        break;
+      case ICON_CROSS:
+        ctx.beginPath();
+        ctx.moveTo(x + 2, y + 2); ctx.lineTo(x + s - 2, y + s - 2);
+        ctx.moveTo(x + s - 2, y + 2); ctx.lineTo(x + 2, y + s - 2);
+        ctx.stroke();
+        break;
+      case ICON_WARNING:
+        this.fillTriangle(x + s/2, y + 2, x + 2, y + s - 2, x + s - 2, y + s - 2, color);
+        ctx.fillStyle = COLORS.WHITE;
+        ctx.fillRect(x + s/2 - 1, y + s/3, 2, s/3);
+        ctx.fillRect(x + s/2 - 1, y + s*2/3 + 2, 2, 2);
+        break;
+      case ICON_INFO:
+        this.drawCircle(x + s/2, y + s/2, s/2 - 2, color);
+        this.fillRect(x + s/2 - 1, y + s/3, 2, s/3 + 2, color);
+        this.fillRect(x + s/2 - 1, y + s/5, 2, 2, color);
+        break;
+      case ICON_ARROW_UP:
+        this.fillTriangle(x + s/2, y + 2, x + 2, y + s/2, x + s - 2, y + s/2, color);
+        this.fillRect(x + s/2 - 2, y + s/2, 4, s/2 - 2, color);
+        break;
+      case ICON_ARROW_DOWN:
+        this.fillTriangle(x + s/2, y + s - 2, x + 2, y + s/2, x + s - 2, y + s/2, color);
+        this.fillRect(x + s/2 - 2, y + 2, 4, s/2 - 2, color);
+        break;
+      case ICON_CLOUD:
+        this.fillCircle(x + s/3, y + s/2, s/4, color);
+        this.fillCircle(x + s*2/3, y + s/2, s/3, color);
+        this.fillCircle(x + s/2, y + s/3, s/4, color);
+        this.fillRect(x + s/4, y + s/2, s/2, s/3, color);
+        break;
+      case ICON_SERVER:
+        this.fillRoundRect(x + 2, y + 2, s - 4, s/3 - 2, 2, color);
+        this.fillRoundRect(x + 2, y + s/3 + 1, s - 4, s/3 - 2, 2, color);
+        this.fillRoundRect(x + 2, y + s*2/3, s - 4, s/3 - 2, 2, color);
+        break;
+      case ICON_CHART:
+        ctx.beginPath();
+        ctx.moveTo(x + 4, y + s*2/3);
+        ctx.lineTo(x + s/3, y + s/2);
+        ctx.lineTo(x + s*2/3, y + s/3);
+        ctx.lineTo(x + s - 4, y + s/4);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x + 2, y + s - 2); ctx.lineTo(x + 2, y + 2);
+        ctx.moveTo(x + 2, y + s - 2); ctx.lineTo(x + s - 2, y + s - 2);
+        ctx.stroke();
+        break;
+      case ICON_LOCK:
+        this.fillRoundRect(x + s/4, y + s/2, s/2, s/2, 2, color);
+        ctx.beginPath();
+        ctx.arc(x + s/2, y + s/3, s/6, Math.PI, 0);
+        ctx.stroke();
+        break;
+    }
+  },
+
+  // ── Widgets ───────────────────────────────────────────────────────────────
+  drawProgressBar(x, y, w, h, percent, fg, bg, border) {
+    percent = Math.max(0, Math.min(100, percent));
+    this.fillRoundRect(x, y, w, h, h/2, bg);
+    this.drawRoundRect(x, y, w, h, h/2, border);
+    const filled = Math.round((percent / 100) * (w - 4));
+    if (filled > 0) this.fillRoundRect(x + 2, y + 2, filled, h - 4, Math.max(1, (h-4)/2), fg);
+  },
+
+  drawSparkline(x, y, w, h, values, count, color) {
+    if (count < 2) return;
+    const vals = Array.from({length: count}, (_, i) => values[i]);
+    const mn = Math.min(...vals), mx = Math.max(...vals);
+    const range = mx - mn || 1;
+    ctx.strokeStyle = this._color(color);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 0; i < count; i++) {
+      const px = x + (i * w / (count - 1));
+      const py = y + h - 1 - ((vals[i] - mn) / range * (h - 1));
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  },
+
+  drawMetricCard(x, y, w, h, label, value, unit, bg, fg, accent) {
+    this.fillRoundRect(x, y, w, h, 6, bg);
+    this.drawRoundRect(x, y, w, h, 6, fg);
+    this.fillRoundRect(x, y, w, 6, 3, accent);
+    this.fillRect(x, y + 3, w, 3, accent);
+    this.drawStringCentered(x, y + 12, w, label, fg, 1);
+    const valStr = String(value);
+    const valSize = valStr.length <= 4 ? 4 : valStr.length <= 6 ? 3 : 2;
+    ctx.font = this._fontFamily(valSize);
+    const vw = ctx.measureText(valStr).width;
+    const vx = x + (w - vw) / 2;
+    const vy = y + h / 2 - this.getCharHeight(valSize) / 2;
+    this.drawString(vx, vy, valStr, fg, valSize);
+    if (unit) {
+      this.drawStringCentered(x, vy + this.getCharHeight(valSize) + 4, w, unit, fg, 1);
+    }
+  },
+
+  drawBadge(x, y, text, bg, fg) {
+    ctx.font = this._fontFamily(1);
+    const tw = ctx.measureText(String(text)).width;
+    const pw = tw + 10, ph = 14;
+    this.fillRoundRect(x, y, pw, ph, ph / 2, bg);
+    this.drawString(x + 5, y + 3, text, fg, 1);
+  },
+
+  drawDivider(x, y, w, color, label, labelColor) {
+    if (label) {
+      ctx.font = this._fontFamily(1);
+      const lw = ctx.measureText(String(label)).width;
+      const lx = x + (w - lw) / 2;
+      this.drawHLine(x, y + 4, (w - lw) / 2 - 4, color);
+      this.drawHLine(lx + lw + 4, y + 4, (w - lw) / 2 - 4, color);
+      this.drawString(lx, y, label, labelColor || color, 1);
+    } else {
+      this.drawHLine(x, y, w, color);
+    }
+  },
+
+  drawTrend(x, y, percent, up, color) {
+    if (up) {
+      this.fillTriangle(x + 6, y, x, y + 8, x + 12, y + 8, color);
+    } else {
+      this.fillTriangle(x + 6, y + 8, x, y, x + 12, y, color);
+    }
+    this.drawString(x + 16, y + 1, percent.toFixed(1) + '%', color, 1);
+  },
+
+  width()  { return W; },
+  height() { return H; },
+};
+
+// Make all API available as top-level functions inside scene
+function makeSceneContext() {
+  const d = EPD;
+  return {
+    EPD_BLACK, EPD_WHITE, EPD_YELLOW, EPD_RED,
+    PIXEL_BLACK, PIXEL_WHITE, PIXEL_YELLOW, PIXEL_RED,
+    ICON_CHECK, ICON_CROSS, ICON_WARNING, ICON_INFO,
+    ICON_ARROW_UP, ICON_ARROW_DOWN, ICON_CLOUD, ICON_SERVER, ICON_CHART, ICON_LOCK,
+    FONT_SMALL, FONT_MEDIUM, FONT_LARGE, FONT_XLARGE,
+    setPixel:           (x,y,c)             => d.setPixel(x,y,c),
+    drawLine:           (x0,y0,x1,y1,c)     => d.drawLine(x0,y0,x1,y1,c),
+    drawHLine:          (x,y,w,c)           => d.drawHLine(x,y,w,c),
+    drawVLine:          (x,y,h,c)           => d.drawVLine(x,y,h,c),
+    drawRect:           (x,y,w,h,c)         => d.drawRect(x,y,w,h,c),
+    fillRect:           (x,y,w,h,c)         => d.fillRect(x,y,w,h,c),
+    drawRoundRect:      (x,y,w,h,r,c)       => d.drawRoundRect(x,y,w,h,r,c),
+    fillRoundRect:      (x,y,w,h,r,c)       => d.fillRoundRect(x,y,w,h,r,c),
+    drawCircle:         (cx,cy,r,c)         => d.drawCircle(cx,cy,r,c),
+    fillCircle:         (cx,cy,r,c)         => d.fillCircle(cx,cy,r,c),
+    drawTriangle:       (x0,y0,x1,y1,x2,y2,c) => d.drawTriangle(x0,y0,x1,y1,x2,y2,c),
+    fillTriangle:       (x0,y0,x1,y1,x2,y2,c) => d.fillTriangle(x0,y0,x1,y1,x2,y2,c),
+    drawChar:           (x,y,c,col,s)       => d.drawChar(x,y,c,col,s),
+    drawString:         (x,y,s,c,sz)        => d.drawString(x,y,s,c,sz),
+    drawStringCentered: (x,y,w,s,c,sz)      => d.drawStringCentered(x,y,w,s,c,sz),
+    drawInt:            (x,y,v,c,s)         => d.drawInt(x,y,v,c,s),
+    drawFloat:          (x,y,v,dec,c,s)     => d.drawFloat(x,y,v,dec,c,s),
+    getStringWidth:     (s,sz)              => d.getStringWidth(s,sz),
+    getCharHeight:      (s)                 => d.getCharHeight(s),
+    drawIcon:           (x,y,ic,s,c)        => d.drawIcon(x,y,ic,s,c),
+    drawProgressBar:    (x,y,w,h,p,f,b,bo)  => d.drawProgressBar(x,y,w,h,p,f,b,bo),
+    drawSparkline:      (x,y,w,h,v,n,c)     => d.drawSparkline(x,y,w,h,v,n,c),
+    drawMetricCard:     (x,y,w,h,l,v,u,bg,fg,ac) => d.drawMetricCard(x,y,w,h,l,v,u,bg,fg,ac),
+    drawBadge:          (x,y,t,bg,fg)       => d.drawBadge(x,y,t,bg,fg),
+    drawDivider:        (x,y,w,c,l,lc)      => d.drawDivider(x,y,w,c,l,lc),
+    drawTrend:          (x,y,p,u,c)         => d.drawTrend(x,y,p,u,c),
+    width:              ()                  => W,
+    height:             ()                  => H,
+    console: { log: (...a) => log(a.join(' '), 'log') }
+  };
+}
+
+// ── Run ──────────────────────────────────────────────────────────────────────
+function runScene() {
+  const code = document.getElementById('scene-editor').value;
+  const overlay = document.getElementById('refresh-overlay');
+
+  // E-ink flicker effect
+  overlay.classList.remove('flicker');
+  void overlay.offsetWidth;
+  overlay.classList.add('flicker');
+
+  const progress = document.getElementById('render-progress');
+  progress.style.transform = 'scaleX(0)';
+  requestAnimationFrame(() => {
+    progress.style.transform = 'scaleX(0.3)';
+    setTimeout(() => { progress.style.transform = 'scaleX(0.7)'; }, 100);
+    setTimeout(() => { progress.style.transform = 'scaleX(1)'; }, 300);
+    setTimeout(() => { progress.style.transform = 'scaleX(0)'; }, 700);
+  });
+
+  try {
+    EPD.clear(EPD_WHITE);
+    const ctx2 = makeSceneContext();
+    const fn = new Function(...Object.keys(ctx2), code);
+    fn(...Object.values(ctx2));
+    log('✓ Rendered successfully', 'success');
+  } catch(e) {
+    log('✗ ' + e.message, 'error');
+    console.error(e);
+  }
+}
+
+// ── Console ───────────────────────────────────────────────────────────────────
+function log(msg, type = 'log') {
+  const out = document.getElementById('console-output');
+  const line = document.createElement('div');
+  line.className = 'log-' + type;
+  const ts = new Date().toLocaleTimeString('en', {hour12: false});
+  line.textContent = `[${ts}] ${msg}`;
+  out.appendChild(line);
+  out.scrollTop = out.scrollHeight;
+}
+
+function clearConsole() {
+  document.getElementById('console-output').innerHTML = '';
+}
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('scene-editor').style.display = tab === 'scene' ? 'block' : 'none';
+  document.getElementById('api-editor').style.display   = tab === 'api'   ? 'block' : 'none';
+}
+
+// ── Export ────────────────────────────────────────────────────────────────────
+function downloadPNG() {
+  const link = document.createElement('a');
+  link.download = 'gdem102f91_preview.png';
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+  log('↓ Exported PNG', 'info');
+}
+
+// ── Example scene ─────────────────────────────────────────────────────────────
+const EXAMPLE_SCENE = `// GDEM102F91 Emulator — Cloud Dashboard Example
+// Edit this scene and press Ctrl+Enter (or ▶ Render) to preview.
+// All drawing calls use display coordinates: 960 × 640 px.
+
+// ── Sample data ──────────────────────────────────────────────────────────
+const cpuHistory  = [42, 55, 61, 48, 70, 65, 72, 58, 63, 75, 68, 80];
+const memHistory  = [60, 62, 65, 63, 67, 70, 68, 72, 71, 75, 73, 74];
+const reqHistory  = [120,145,132,167,155,178,162,190,175,188,195,210];
+
+// ── Header ───────────────────────────────────────────────────────────────
+fillRect(0, 0, 960, 48, EPD_BLACK);
+drawString(16, 14, "CLOUD INFRASTRUCTURE DASHBOARD", EPD_WHITE, 2);
+drawString(740, 14, "2025-04-03  08:00", EPD_WHITE, 1);
+drawBadge(870, 10, "LIVE", EPD_RED, EPD_WHITE);
+drawHLine(0, 48, 960, EPD_BLACK);
+
+// ── Metric cards ─────────────────────────────────────────────────────────
+drawMetricCard(10,  60, 215, 140, "CPU USAGE",    "68%",   "",      EPD_WHITE, EPD_BLACK, EPD_RED);
+drawMetricCard(235, 60, 215, 140, "MEMORY",       "74%",   "",      EPD_WHITE, EPD_BLACK, EPD_YELLOW);
+drawMetricCard(460, 60, 215, 140, "REQUESTS/MIN", "2,847", "req/m", EPD_WHITE, EPD_BLACK, EPD_BLACK);
+drawMetricCard(685, 60, 215, 140, "ERROR RATE",   "0.3%",  "",      EPD_WHITE, EPD_BLACK, EPD_RED);
+
+// ── Trend indicators ──────────────────────────────────────────────────────
+drawTrend(20,  205, 12.5, true,  EPD_BLACK);
+drawTrend(245, 205,  3.2, true,  EPD_BLACK);
+drawTrend(470, 205,  8.1, true,  EPD_BLACK);
+drawTrend(695, 205,  0.1, false, EPD_BLACK);
+
+// ── Section divider ───────────────────────────────────────────────────────
+drawDivider(10, 225, 940, EPD_BLACK, "PERFORMANCE HISTORY", EPD_BLACK);
+
+// ── Sparklines ────────────────────────────────────────────────────────────
+drawRect(10, 245, 295, 100, EPD_BLACK);
+drawString(16, 249, "CPU %", EPD_BLACK, 1);
+drawSparkline(16, 261, 283, 80, cpuHistory, 12, EPD_RED);
+
+drawRect(325, 245, 295, 100, EPD_BLACK);
+drawString(331, 249, "MEMORY %", EPD_BLACK, 1);
+drawSparkline(331, 261, 283, 80, memHistory, 12, EPD_BLACK);
+
+drawRect(640, 245, 305, 100, EPD_BLACK);
+drawString(646, 249, "REQUESTS/MIN", EPD_BLACK, 1);
+drawSparkline(646, 261, 293, 80, reqHistory, 12, EPD_YELLOW);
+
+// ── Section divider ───────────────────────────────────────────────────────
+drawDivider(10, 360, 940, EPD_BLACK, "SERVICE STATUS", EPD_BLACK);
+
+// ── Service status table ──────────────────────────────────────────────────
+const services = ["api-gateway","auth-service","db-primary","cache-layer","queue-worker","cdn-edge"];
+const statuses  = ["OK","OK","OK","WARN","OK","DEGRADED"];
+const sColors   = [EPD_BLACK,EPD_BLACK,EPD_BLACK,EPD_YELLOW,EPD_BLACK,EPD_RED];
+const uptimes   = [99.98,99.95,100.0,97.2,99.91,94.5];
+const icons     = [ICON_CHECK,ICON_CHECK,ICON_SERVER,ICON_WARNING,ICON_CHECK,ICON_CROSS];
+const latencies = ["12ms","8ms","2ms","48ms","5ms","220ms"];
+const reqs      = ["1,847","923","384","2,103","567","445"];
+
+// Header row
+fillRect(10, 380, 940, 32, EPD_BLACK);
+drawString(20,  390, "SERVICE",  EPD_WHITE, 1);
+drawString(220, 390, "STATUS",   EPD_WHITE, 1);
+drawString(360, 390, "UPTIME",   EPD_WHITE, 1);
+drawString(500, 390, "LATENCY",  EPD_WHITE, 1);
+drawString(680, 390, "REQUESTS", EPD_WHITE, 1);
+drawString(820, 390, "HEALTH",   EPD_WHITE, 1);
+
+for (let i = 0; i < 6; i++) {
+  const ry = 412 + i * 34;
+  if (i % 2 === 0) fillRect(10, ry, 940, 32, EPD_WHITE);
+  drawRect(10, ry, 940, 32, EPD_BLACK);
+  drawIcon(16, ry + 8, icons[i], 1, sColors[i]);
+  drawString(36, ry + 12, services[i], EPD_BLACK, 1);
+  drawBadge(220, ry + 9, statuses[i], sColors[i],
+    (sColors[i] === EPD_BLACK || sColors[i] === EPD_RED) ? EPD_WHITE : EPD_BLACK);
+  drawString(360, ry + 12, uptimes[i].toFixed(2) + "%", EPD_BLACK, 1);
+  drawString(500, ry + 12, latencies[i], EPD_BLACK, 1);
+  drawString(680, ry + 12, reqs[i],      EPD_BLACK, 1);
+  drawProgressBar(820, ry + 9, 110, 14, uptimes[i], sColors[i], EPD_WHITE, EPD_BLACK);
+}
+
+// ── Footer ────────────────────────────────────────────────────────────────
+fillRect(0, 618, 960, 22, EPD_BLACK);
+drawString(10,  622, "Region: us-east-1",    EPD_WHITE, 1);
+drawString(250, 622, "Cluster: prod-k8s-01", EPD_WHITE, 1);
+drawString(500, 622, "Nodes: 12/12",         EPD_WHITE, 1);
+drawString(750, 622, "Next refresh: 5 min",  EPD_WHITE, 1);
+`;
+
+const API_CHEATSHEET = `// ── Color constants ─────────────────────────────────────────────────────
+// EPD_BLACK  EPD_WHITE  EPD_YELLOW  EPD_RED
+// PIXEL_BLACK  PIXEL_WHITE  PIXEL_YELLOW  PIXEL_RED
+
+// ── Icon constants ───────────────────────────────────────────────────────
+// ICON_CHECK  ICON_CROSS  ICON_WARNING  ICON_INFO
+// ICON_ARROW_UP  ICON_ARROW_DOWN  ICON_CLOUD
+// ICON_SERVER  ICON_CHART  ICON_LOCK
+
+// ── Font size constants ──────────────────────────────────────────────────
+// FONT_SMALL=1  FONT_MEDIUM=2  FONT_LARGE=3  FONT_XLARGE=4
+// px: 6×8       12×16          18×24          24×32
+
+// ── Primitives ───────────────────────────────────────────────────────────
+setPixel(x, y, color)
+drawLine(x0, y0, x1, y1, color)
+drawHLine(x, y, w, color)
+drawVLine(x, y, h, color)
+drawRect(x, y, w, h, color)
+fillRect(x, y, w, h, color)
+drawRoundRect(x, y, w, h, r, color)
+fillRoundRect(x, y, w, h, r, color)
+drawCircle(cx, cy, r, color)
+fillCircle(cx, cy, r, color)
+drawTriangle(x0, y0, x1, y1, x2, y2, color)
+fillTriangle(x0, y0, x1, y1, x2, y2, color)
+
+// ── Text ─────────────────────────────────────────────────────────────────
+drawChar(x, y, char, color, size)
+drawString(x, y, string, color, size)
+drawStringCentered(x, y, width, string, color, size)
+drawInt(x, y, integer, color, size)
+drawFloat(x, y, float, decimals, color, size)
+getStringWidth(string, size)  → pixels
+getCharHeight(size)           → pixels
+
+// ── Icons ─────────────────────────────────────────────────────────────────
+drawIcon(x, y, ICON_*, size, color)
+// size 1=8px  2=16px  3=24px  4=32px
+
+// ── Dashboard widgets ─────────────────────────────────────────────────────
+drawProgressBar(x, y, w, h, percent, fg, bg, border)
+drawSparkline(x, y, w, h, valuesArray, count, color)
+drawMetricCard(x, y, w, h, label, value, unit, bg, fg, accent)
+drawBadge(x, y, text, bg, fg)
+drawDivider(x, y, w, color, label, labelColor)
+drawTrend(x, y, percent, upBool, color)
+
+// ── Utility ───────────────────────────────────────────────────────────────
+width()   → 960
+height()  → 640
+console.log(...)
+
+// ── Display dimensions ────────────────────────────────────────────────────
+// 960 × 640 px landscape
+// Typical layout zones:
+//   Y  0- 48  Header bar
+//   Y 60-200  Metric cards (4× drawMetricCard, 215w, 25px gap)
+//   Y200-225  Trend row
+//   Y225-245  Section divider
+//   Y245-360  Sparkline charts
+//   Y360-380  Section divider
+//   Y380-615  Status table (6 rows × 36px)
+//   Y618-640  Footer bar
+`;
+
+function loadExample() {
+  document.getElementById('scene-editor').value = EXAMPLE_SCENE;
+  document.getElementById('api-editor').value = API_CHEATSHEET;
+  runScene();
+}
+
+// ── Keyboard shortcut ─────────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    runScene();
+  }
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+fitCanvas();
+document.getElementById('api-editor').value = API_CHEATSHEET;
+loadExample();
+log('GDEM102F91 Emulator ready. 960×640 · 4-color e-paper.', 'info');
+log('Edit the scene and press Ctrl+Enter or ▶ Render to preview.', 'info');
+</script>
+</body>
+</html>
