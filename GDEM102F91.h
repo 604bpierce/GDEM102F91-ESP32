@@ -100,6 +100,22 @@ public:
     int16_t getStringWidth(const char* str, uint8_t size);
     int16_t getCharHeight(uint8_t size);
 
+    // ─── Bitmaps ──────────────────────────────────────────────────────────────
+    // Draw a 2bpp (4-color) bitmap stored in PROGMEM.
+    // Pixel encoding matches the display: 4 pixels per byte, MSB-first,
+    // 2 bits each: 00=black 01=white 10=yellow 11=red.
+    // w must be a multiple of 4.
+    void drawBitmap2bpp(int16_t x, int16_t y, int16_t w, int16_t h,
+                        const uint8_t* bitmap);
+
+    // Draw a 1bpp monochrome bitmap stored in PROGMEM.
+    // Each row is ceil(w/8) bytes, MSB = leftmost pixel.
+    // Set bits draw fgColor; clear bits draw bgColor.
+    // Pass bgColor = 0xFF to make the background transparent (skip clear pixels).
+    void drawBitmap1bpp(int16_t x, int16_t y, int16_t w, int16_t h,
+                        const uint8_t* bitmap, uint8_t fgColor,
+                        uint8_t bgColor = 0xFF);
+
     // ─── Icons ────────────────────────────────────────────────────────────────
     void drawIcon(int16_t x, int16_t y, uint8_t icon, uint8_t size, uint8_t color);
 

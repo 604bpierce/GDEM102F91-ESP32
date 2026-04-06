@@ -428,6 +428,84 @@ int16_t GDEM102F91::getCharHeight(uint8_t size) {
     return 8 * size;
 }
 
+// ─── drawBitmap2bpp ──────────────────────────────────────────────────────────
+// w must be a multiple of 4 (one byte covers 4 pixels).
+// Bitmap rows are EPD_ROW_BYTES-style: 2 bits per pixel, MSB first.
+void GDEM102F91::drawBitmap2bpp(int16_t x, int16_t y, int16_t w, int16_t h,
+                                  const uint8_t* bitmap) {
+    if (w <= 0 || h <= 0) return;
+
+    // Clip to display bounds horizontally
+    int16_t x0 = x, x1 = x + w;
+    if (x0 >= EPD_WIDTH || x1 <= 0) return;
+    if (x0 < 0) x0 = 0;
+    if (x1 > EPD_WIDTH) x1 = EPD_WIDTH;
+
+    int16_t rowBytes = (w + 3) / 4;  // bytes per bitmap row
+
+    for (int16_t row = 0; row < h; row++) {
+        int16_t displayY = y + row;
+        int16_t localY   = displayY - _tileY;
+        if (localY < 0 || localY >= _tileH) continue;  // outside current tile
+
+        const uint8_t* srcRow = bitmap + (uint32_t)row * rowBytes;
+
+        // Fast path: bitmap is 4-pixel aligned at both src and dst
+        if ((x % 4) == 0 && (w % 4) == 0) {
+            int16_t dstByte  = x / 4;
+            int16_t srcByte0 = (x0 - x) / 4;
+            int16_t srcByte1 = (x1 - x + 3) / 4;
+            uint32_t dstIdx  = (uint32_t)localY * EPD_ROW_BYTES + dstByte + srcByte0;
+            for (int16_t b = srcByte0; b < srcByte1; b++) {
+                _buf[dstIdx++] = pgm_read_byte(srcRow + b);
+            }
+        } else {
+            // Pixel-by-pixel fallback for unaligned bitmaps
+            for (int16_t col = x0; col < x1; col++) {
+                int16_t srcCol = col - x;
+                uint8_t srcByte = pgm_read_byte(srcRow + (srcCol / 4));
+                uint8_t shift   = (3 - (srcCol % 4)) * 2;
+                uint8_t pixel   = (srcByte >> shift) & 0x03;
+                setPixel(col, displayY, pixel);
+            }
+        }
+    }
+}
+
+// ─── drawBitmap1bpp ──────────────────────────────────────────────────────────
+// Each row is ceil(w/8) bytes, MSB = leftmost pixel.
+// bgColor == 0xFF means transparent (clear bits are skipped).
+void GDEM102F91::drawBitmap1bpp(int16_t x, int16_t y, int16_t w, int16_t h,
+                                  const uint8_t* bitmap, uint8_t fgColor,
+                                  uint8_t bgColor) {
+    if (w <= 0 || h <= 0) return;
+
+    int16_t rowBytes = (w + 7) / 8;
+    bool transparent = (bgColor == 0xFF);
+
+    for (int16_t row = 0; row < h; row++) {
+        int16_t displayY = y + row;
+        int16_t localY   = displayY - _tileY;
+        if (localY < 0 || localY >= _tileH) continue;
+
+        const uint8_t* srcRow = bitmap + (uint32_t)row * rowBytes;
+
+        for (int16_t col = 0; col < w; col++) {
+            int16_t displayX = x + col;
+            if (displayX < 0 || displayX >= EPD_WIDTH) continue;
+
+            uint8_t srcByte = pgm_read_byte(srcRow + (col / 8));
+            bool    set     = (srcByte >> (7 - (col % 8))) & 0x01;
+
+            if (set) {
+                setPixel(displayX, displayY, fgColor);
+            } else if (!transparent) {
+                setPixel(displayX, displayY, bgColor);
+            }
+        }
+    }
+}
+
 // ─── drawIcon ─────────────────────────────────────────────────────────────────
 void GDEM102F91::drawIcon(int16_t x, int16_t y, uint8_t icon,
                            uint8_t size, uint8_t color) {
