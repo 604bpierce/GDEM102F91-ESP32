@@ -4,7 +4,7 @@ An Arduino library for the **Good Display GDEM102F91** — a 10.2-inch, 960×640
 
 This library was reverse-engineered from the panel's official datasheet after discovering that no existing Arduino library supported the GDEM102F91's SSD2677 controller and 4-color waveform. It solves the ESP32 memory limitation with a tile-based renderer that uses only ~5KB of RAM regardless of display size.
 
-![Display showing a cloud infrastructure dashboard with metric cards, sparklines, and a service status table in black, white, red, and yellow](docs/dashboard_example.jpg)
+![Display showing a cloud infrastructure dashboard with metric cards, sparklines, and a service status table in black, white, red, and yellow](docs/dashboard_example.jpeg)
 
 ---
 
